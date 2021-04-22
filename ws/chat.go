@@ -65,7 +65,7 @@ func Chat(w gin.ResponseWriter, r *http.Request) {
 			msgCh <- &ChatMessage{
 				command: "message",
 				msg: MessageSend{
-					Message: fmt.Sprintf("%s: %s", name, msg),
+					Message: fmt.Sprintf("[%s] %s: %s", Now(), name, msg),
 				},
 			}
 		}
