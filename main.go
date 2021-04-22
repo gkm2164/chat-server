@@ -4,12 +4,14 @@ import (
 	"chat-server/ws"
 	"github.com/gin-contrib/static"
 	"github.com/gin-gonic/gin"
-	"log"
+	"github.com/sirupsen/logrus"
+	ginlogrus "github.com/toorop/gin-logrus"
 )
 
 func main() {
+	log := logrus.New()
 	server := gin.New()
-
+	server.Use(ginlogrus.Logger(log), gin.Recovery())
 	server.GET("/ws", func(c *gin.Context) {
 		ws.Chat(c.Writer, c.Request)
 	})
