@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"net/http"
+	"time"
 )
 
 type AllUsers map[*websocket.Conn]string
@@ -92,6 +93,10 @@ type ChatMessage struct {
 	msg     ChatMessageDetail
 }
 
+func Now() string {
+	return time.Now().Format("15:04:05")
+}
+
 func Handler(msgCh chan *ChatMessage) {
 	var m = map[string]*websocket.Conn{}
 
@@ -101,7 +106,7 @@ func Handler(msgCh chan *ChatMessage) {
 			joinMsg := msg.msg.(JoinMessage)
 			m[joinMsg.Name] = joinMsg.Conn
 			for _, conn := range m {
-				if err := conn.WriteJSON(fmt.Sprintf("%s joined room", joinMsg.Name)); err != nil {
+				if err := conn.WriteJSON(fmt.Sprintf("[%s] %s joined room", Now(), joinMsg.Name)); err != nil {
 					continue
 				}
 			}
@@ -118,7 +123,7 @@ func Handler(msgCh chan *ChatMessage) {
 			leaveMsg := msg.msg.(LeaveMessage)
 			delete(m, leaveMsg.Name)
 			for _, conn := range m {
-				if err := conn.WriteJSON(fmt.Sprintf("%s left room", leaveMsg.Name)); err != nil {
+				if err := conn.WriteJSON(fmt.Sprintf("[%s] %s left room", Now(), leaveMsg.Name)); err != nil {
 					continue
 				}
 			}
