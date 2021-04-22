@@ -13,10 +13,10 @@ type AllUsers map[*websocket.Conn]string
 
 var users = AllUsers{}
 
-var msgCh chan *ChatMessage
+var msgCh chan ChatMessageDetail
 
 func init() {
-	msgCh = make(chan *ChatMessage)
+	msgCh = make(chan ChatMessageDetail)
 	go Handler(msgCh)
 }
 
@@ -38,21 +38,15 @@ func Chat(w gin.ResponseWriter, r *http.Request) {
 		}
 
 		name := users[conn]
-		msgCh <- &ChatMessage{
-			command: "join",
-			msg: JoinMessage{
-				Name: name,
-				Conn: conn,
-			},
+		msgCh <- JoinMessage{
+			Name: name,
+			Conn: conn,
 		}
 
 		defer func(conn *websocket.Conn, name string) {
-			msgCh <- &ChatMessage{
-				command: "leave",
-				msg: LeaveMessage{
-					Name: name,
-					Conn: conn,
-				},
+			msgCh <- LeaveMessage{
+				Name: name,
+				Conn: conn,
 			}
 		}(conn, name)
 
@@ -62,11 +56,8 @@ func Chat(w gin.ResponseWriter, r *http.Request) {
 				break
 			}
 
-			msgCh <- &ChatMessage{
-				command: "message",
-				msg: MessageSend{
-					Message: fmt.Sprintf("[%s] %s: %s", Now(), name, msg),
-				},
+			msgCh <- MessageSend{
+				Message: fmt.Sprintf("%s: %s", name, msg),
 			}
 		}
 	}
@@ -88,22 +79,17 @@ type LeaveMessage struct {
 	Conn *websocket.Conn
 }
 
-type ChatMessage struct {
-	command string
-	msg     ChatMessageDetail
-}
-
 func Now() string {
 	return time.Now().Format("15:04:05")
 }
 
-func Handler(msgCh chan *ChatMessage) {
+func Handler(msgCh chan ChatMessageDetail) {
 	var m = map[string]*websocket.Conn{}
 
 	for msg := range msgCh {
-		switch msg.command {
-		case "join":
-			joinMsg := msg.msg.(JoinMessage)
+		switch msg.(type) {
+		case JoinMessage:
+			joinMsg := msg.(JoinMessage)
 			m[joinMsg.Name] = joinMsg.Conn
 			for _, conn := range m {
 				if err := conn.WriteJSON(fmt.Sprintf("[%s] %s joined room", Now(), joinMsg.Name)); err != nil {
@@ -111,16 +97,16 @@ func Handler(msgCh chan *ChatMessage) {
 				}
 			}
 			break
-		case "message":
-			sendMsg := msg.msg.(MessageSend)
+		case MessageSend:
+			sendMsg := msg.(MessageSend)
 			for _, conn := range m {
-				if err := conn.WriteJSON(sendMsg.Message); err != nil {
+				if err := conn.WriteJSON(fmt.Sprintf("[%s] %s", Now(), sendMsg.Message)); err != nil {
 					continue
 				}
 			}
 			break
-		case "leave":
-			leaveMsg := msg.msg.(LeaveMessage)
+		case LeaveMessage:
+			leaveMsg := msg.(LeaveMessage)
 			delete(m, leaveMsg.Name)
 			for _, conn := range m {
 				if err := conn.WriteJSON(fmt.Sprintf("[%s] %s left room", Now(), leaveMsg.Name)); err != nil {
@@ -129,7 +115,7 @@ func Handler(msgCh chan *ChatMessage) {
 			}
 			break
 		default:
-			fmt.Printf("unknown message: %s", msg.command)
+			fmt.Printf("unknown message: %v", msg)
 		}
 	}
 }
