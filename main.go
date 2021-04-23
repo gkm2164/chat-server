@@ -10,6 +10,11 @@ import (
 
 func main() {
 	log := logrus.New()
+	switch gin.Mode() {
+	case gin.ReleaseMode:
+		log.SetFormatter(&logrus.JSONFormatter{})
+	default:
+	}
 	server := gin.New()
 	server.Use(ginlogrus.Logger(log), gin.Recovery())
 	server.GET("/ws", func(c *gin.Context) {

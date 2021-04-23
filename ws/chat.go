@@ -116,7 +116,7 @@ func Handler(msgCh chan ChatMessageDetail) {
 					message = ret
 				}
 
-				if err := conn.WriteJSON(fmt.Sprintf("SYSTEM: %s", message)); err != nil {
+				if err := conn.WriteJSON(fmt.Sprintf("[%s] SYSTEM: %s", Now(), message)); err != nil {
 					break
 				}
 			} else {
@@ -153,8 +153,7 @@ func parseMessage(message string, m map[string]*websocket.Conn) (string, error) 
 		for member, _ := range m {
 			members = append(members, member)
 		}
-		return fmt.Sprintf("[%s] List of members %d: [%s]",
-			Now(), len(members), strings.Join(members, ", ")), nil
+		return fmt.Sprintf("List of members %d: [%s]", len(members), strings.Join(members, ", ")), nil
 	case "whisper":
 		fallthrough
 	default:
