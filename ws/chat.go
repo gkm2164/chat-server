@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/sirupsen/logrus"
 	"net/http"
 	"strings"
 	"time"
@@ -16,9 +17,9 @@ var users = AllUsers{}
 
 var msgCh chan ChatMessageDetail
 
-func init() {
+func Init(log *logrus.Logger) {
 	msgCh = make(chan ChatMessageDetail)
-	go Handler(msgCh)
+	go Handler(log, msgCh)
 }
 
 func Chat(w gin.ResponseWriter, r *http.Request) {
@@ -95,7 +96,7 @@ func broadcastMessage(m map[string]*websocket.Conn, message string) {
 	}
 }
 
-func Handler(msgCh chan ChatMessageDetail) {
+func Handler(log *logrus.Logger, msgCh chan ChatMessageDetail) {
 	var m = map[string]*websocket.Conn{}
 
 	for msg := range msgCh {
@@ -103,6 +104,7 @@ func Handler(msgCh chan ChatMessageDetail) {
 		case JoinMessage:
 			joinMsg := msg.(JoinMessage)
 			m[joinMsg.Name] = joinMsg.Conn
+			log.Infof("joined: %s", joinMsg.Name)
 			broadcastMessage(m, fmt.Sprintf("[%s] %s joined room", Now(), joinMsg.Name))
 			break
 		case MessageSend:
@@ -120,11 +122,13 @@ func Handler(msgCh chan ChatMessageDetail) {
 					break
 				}
 			} else {
+				log.Infof("%s typed [%s]", sendMsg.Sender, sendMsg.Message)
 				broadcastMessage(m, fmt.Sprintf("[%s] %s: %s", Now(), sendMsg.Sender, sendMsg.Message))
 			}
 			break
 		case LeaveMessage:
 			leaveMsg := msg.(LeaveMessage)
+			log.Infof("%s left", leaveMsg.Name)
 			delete(m, leaveMsg.Name)
 			broadcastMessage(m, fmt.Sprintf("[%s] %s left room", Now(), leaveMsg.Name))
 			break

@@ -15,6 +15,9 @@ func main() {
 		log.SetFormatter(&logrus.JSONFormatter{})
 	default:
 	}
+
+	ws.Init(log)
+
 	server := gin.New()
 	server.Use(ginlogrus.Logger(log), gin.Recovery())
 	server.GET("/ws", func(c *gin.Context) {
