@@ -15,6 +15,37 @@ type AllUsers map[*websocket.Conn]string
 
 var users = AllUsers{}
 
+type UpdateMembers struct {
+	Members int `json:"members"`
+}
+
+type BroadcastMessage struct {
+	Sender  string `json:"sender"`
+	Message string `json:"message"`
+}
+
+type ChatMessageDetail interface{}
+
+type JoinMessage struct {
+	Name string
+	Conn *websocket.Conn
+}
+
+type MessageSend struct {
+	Action  string      `json:"action"`
+	Message interface{} `json:"message"`
+}
+
+type LeaveMessage struct {
+	Name string
+	Conn *websocket.Conn
+}
+
+const (
+	MembersAction = "members"
+	MessageAction = "message"
+)
+
 var msgCh chan ChatMessageDetail
 
 func Init(log *logrus.Logger) {
@@ -46,13 +77,25 @@ func Chat(w gin.ResponseWriter, r *http.Request) {
 		Name: name,
 		Conn: conn,
 	}
+	msgCh <- MessageSend{
+		Action: MembersAction,
+		Message: UpdateMembers{
+			Members: len(users),
+		},
+	}
 
-	defer func(conn *websocket.Conn, name string) {
+	defer func(conn *websocket.Conn, name string, users int) {
 		msgCh <- LeaveMessage{
 			Name: name,
 			Conn: conn,
 		}
-	}(conn, name)
+		msgCh <- MessageSend{
+			Action: MembersAction,
+			Message: UpdateMembers{
+				Members: users,
+			},
+		}
+	}(conn, name, len(users))
 
 	for {
 		msg := ""
@@ -61,34 +104,20 @@ func Chat(w gin.ResponseWriter, r *http.Request) {
 		}
 
 		msgCh <- MessageSend{
-			Sender: name,
-			Message: msg,
+			Action: MessageAction,
+			Message: BroadcastMessage{
+				Sender:  name,
+				Message: msg,
+			},
 		}
 	}
-}
-
-type ChatMessageDetail interface{}
-
-type JoinMessage struct {
-	Name string
-	Conn *websocket.Conn
-}
-
-type MessageSend struct {
-	Sender  string
-	Message string
-}
-
-type LeaveMessage struct {
-	Name string
-	Conn *websocket.Conn
 }
 
 func Now() string {
 	return time.Now().Format("15:04:05")
 }
 
-func broadcastMessage(m map[string]*websocket.Conn, message string) {
+func broadcastMessage(m map[string]*websocket.Conn, message interface{}) {
 	for _, conn := range m {
 		if err := conn.WriteJSON(message); err != nil {
 			continue
@@ -108,24 +137,40 @@ func Handler(log *logrus.Logger, msgCh chan ChatMessageDetail) {
 			broadcastMessage(m, fmt.Sprintf("[%s] %s joined room", Now(), joinMsg.Name))
 			break
 		case MessageSend:
-			sendMsg := msg.(MessageSend)
-			if strings.HasPrefix(sendMsg.Message, "/") {
-				conn := m[sendMsg.Sender]
-				var message string
-				if ret, err := parseMessage(sendMsg.Message, m); err != nil {
-					message = fmt.Sprintf("error while parse your command: %v", err)
-				} else {
-					message = ret
-				}
+			msgSend := msg.(MessageSend)
+			switch msgSend.Action {
+			case MessageAction:
+				sendMsg := msgSend.Message.(BroadcastMessage)
+				if strings.HasPrefix(sendMsg.Message, "/") {
+					conn := m[sendMsg.Sender]
+					var message string
+					if ret, err := parseMessage(sendMsg.Message, m); err != nil {
+						message = fmt.Sprintf("error while parse your command: %v", err)
+					} else {
+						message = ret
+					}
 
-				if err := conn.WriteJSON(fmt.Sprintf("[%s] SYSTEM: %s", Now(), message)); err != nil {
-					break
+					if err := conn.WriteJSON(gin.H{
+						"action": "message",
+						"message": fmt.Sprintf("[%s] SYSTEM: %s", Now(), message),
+					}); err != nil {
+						break
+					}
+				} else {
+					log.Infof("%s typed [%s]", sendMsg.Sender, sendMsg.Message)
+					broadcastMessage(m, gin.H{
+						"action": "message",
+						"message": fmt.Sprintf("[%s] %s: %s", Now(), sendMsg.Sender, sendMsg.Message),
+					})
 				}
-			} else {
-				log.Infof("%s typed [%s]", sendMsg.Sender, sendMsg.Message)
-				broadcastMessage(m, fmt.Sprintf("[%s] %s: %s", Now(), sendMsg.Sender, sendMsg.Message))
+				break
+			case MembersAction:
+				_ = msgSend.Message.(UpdateMembers)
+				broadcastMessage(m, gin.H{
+					"action": "members",
+					"members": len(m),
+				})
 			}
-			break
 		case LeaveMessage:
 			leaveMsg := msg.(LeaveMessage)
 			log.Infof("%s left", leaveMsg.Name)
@@ -143,7 +188,7 @@ func parseMessage(message string, m map[string]*websocket.Conn) (string, error) 
 	for i := 1; i < len(message); i++ {
 		if message[i] == ' ' {
 			command = message[1:i]
-			message = message[i + 1:]
+			message = message[i+1:]
 		}
 	}
 
