@@ -2,7 +2,6 @@ package main
 
 import (
 	"chat-server/ws"
-	"github.com/gin-contrib/static"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 	ginlogrus "github.com/toorop/gin-logrus"
@@ -24,10 +23,7 @@ func main() {
 		ws.Chat(c.Writer, c.Request)
 	})
 
-	server.NoRoute(static.Serve("/",
-		static.LocalFile("./assets", false)))
-
-	if err := server.Run(":8081"); err != nil {
+	if err := server.Run(":8082"); err != nil {
 		log.Fatalf("error while starting server: %+v", err)
 	}
 }
