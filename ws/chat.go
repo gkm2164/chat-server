@@ -11,40 +11,7 @@ import (
 	"time"
 )
 
-type AllUsers map[*websocket.Conn]string
-
 var users = AllUsers{}
-
-type UpdateMembers struct {
-	Members int `json:"members"`
-}
-
-type BroadcastMessage struct {
-	Sender  string `json:"sender"`
-	Message string `json:"message"`
-}
-
-type ChatMessageDetail interface{}
-
-type JoinMessage struct {
-	Name string
-	Conn *websocket.Conn
-}
-
-type MessageSend struct {
-	Action  string      `json:"action"`
-	Message interface{} `json:"message"`
-}
-
-type LeaveMessage struct {
-	Name string
-	Conn *websocket.Conn
-}
-
-const (
-	MembersAction = "members"
-	MessageAction = "message"
-)
 
 var msgCh chan ChatMessageDetail
 
@@ -73,28 +40,26 @@ func Chat(w gin.ResponseWriter, r *http.Request) {
 	}
 
 	name := users[conn]
-	msgCh <- JoinMessage{
+	sendMessage(msgCh, JoinMessage{
 		Name: name,
 		Conn: conn,
-	}
-	msgCh <- MessageSend{
+	}, MessageSend{
 		Action: MembersAction,
 		Message: UpdateMembers{
 			Members: len(users),
 		},
-	}
+	})
 
 	defer func(conn *websocket.Conn, name string, users int) {
-		msgCh <- LeaveMessage{
+		sendMessage(msgCh, LeaveMessage{
 			Name: name,
 			Conn: conn,
-		}
-		msgCh <- MessageSend{
+		}, MessageSend{
 			Action: MembersAction,
 			Message: UpdateMembers{
 				Members: users,
 			},
-		}
+		})
 	}(conn, name, len(users))
 
 	for {
@@ -103,13 +68,19 @@ func Chat(w gin.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		msgCh <- MessageSend{
+		sendMessage(msgCh, MessageSend{
 			Action: MessageAction,
 			Message: BroadcastMessage{
 				Sender:  name,
 				Message: msg,
 			},
-		}
+		})
+	}
+}
+
+func sendMessage(ch chan ChatMessageDetail, message ...ChatMessageDetail) {
+	for _, msg := range message {
+		ch <- msg
 	}
 }
 
@@ -133,6 +104,12 @@ func Handler(log *logrus.Logger, msgCh chan ChatMessageDetail) {
 		case JoinMessage:
 			joinMsg := msg.(JoinMessage)
 			m[joinMsg.Name] = joinMsg.Conn
+			if err := joinMsg.Conn.WriteJSON(gin.H{
+				"action": "message",
+				"message": fmt.Sprintf("You are joined as [%s]", joinMsg.Name),
+			}); err != nil {
+				return
+			}
 			log.Infof("joined: %s", joinMsg.Name)
 			broadcastMessage(m, fmt.Sprintf("[%s] %s joined room", Now(), joinMsg.Name))
 			break
@@ -144,14 +121,14 @@ func Handler(log *logrus.Logger, msgCh chan ChatMessageDetail) {
 				if strings.HasPrefix(sendMsg.Message, "/") {
 					conn := m[sendMsg.Sender]
 					var message string
-					if ret, err := parseMessage(sendMsg.Message, m); err != nil {
+					if ret, err := parseMessage(sendMsg.Sender, sendMsg.Message, m); err != nil {
 						message = fmt.Sprintf("error while parse your command: %v", err)
 					} else {
 						message = ret
 					}
 
 					if err := conn.WriteJSON(gin.H{
-						"action": "message",
+						"action":  "message",
 						"message": fmt.Sprintf("[%s] SYSTEM: %s", Now(), message),
 					}); err != nil {
 						break
@@ -159,7 +136,7 @@ func Handler(log *logrus.Logger, msgCh chan ChatMessageDetail) {
 				} else {
 					log.Infof("%s typed [%s]", sendMsg.Sender, sendMsg.Message)
 					broadcastMessage(m, gin.H{
-						"action": "message",
+						"action":  "message",
 						"message": fmt.Sprintf("[%s] %s: %s", Now(), sendMsg.Sender, sendMsg.Message),
 					})
 				}
@@ -167,7 +144,7 @@ func Handler(log *logrus.Logger, msgCh chan ChatMessageDetail) {
 			case MembersAction:
 				_ = msgSend.Message.(UpdateMembers)
 				broadcastMessage(m, gin.H{
-					"action": "members",
+					"action":  "members",
 					"members": len(m),
 				})
 			}
@@ -178,23 +155,14 @@ func Handler(log *logrus.Logger, msgCh chan ChatMessageDetail) {
 			broadcastMessage(m, fmt.Sprintf("[%s] %s left room", Now(), leaveMsg.Name))
 			break
 		default:
-			fmt.Printf("unknown message: %v", msg)
+			log.Errorf("unknown message: %v", msg)
 		}
 	}
 }
 
-func parseMessage(message string, m map[string]*websocket.Conn) (string, error) {
-	var command = ""
-	for i := 1; i < len(message); i++ {
-		if message[i] == ' ' {
-			command = message[1:i]
-			message = message[i+1:]
-		}
-	}
-
-	if command == "" {
-		command = message[1:]
-	}
+func parseMessage(sender, message string, m map[string]*websocket.Conn) (string, error) {
+	message = strings.TrimPrefix(message, "/")
+	command, message := splitAtChar(message, ' ')
 
 	switch command {
 	case "members":
@@ -204,8 +172,28 @@ func parseMessage(message string, m map[string]*websocket.Conn) (string, error) 
 		}
 		return fmt.Sprintf("List of members %d: [%s]", len(members), strings.Join(members, ", ")), nil
 	case "whisper":
-		fallthrough
+		to, message := splitAtChar(message, ' ')
+		if conn, ok := m[to]; !ok {
+			return "", fmt.Errorf("user %s is not exist", to)
+		} else if err := conn.WriteJSON(gin.H{
+			"action": "message",
+			"message": fmt.Sprintf("[%s] %s whispered: %s", Now(), sender, message),
+		}); err != nil {
+			return "", fmt.Errorf("failed to send message to %s", to)
+		} else {
+			return fmt.Sprintf("sent message to %s, '%s'", to, message), nil
+		}
 	default:
 		return "", fmt.Errorf("unknown command: %v", command)
 	}
+}
+
+func splitAtChar(str string, ch uint8) (string, string) {
+	for i := 0; i < len(str); i++ {
+		if str[i] == ch {
+			return str[:i], str[i+1:]
+		}
+	}
+
+	return str, ""
 }
