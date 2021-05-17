@@ -20,6 +20,10 @@ func Init(log *logrus.Logger) {
 	go Handler(log, msgCh)
 }
 
+func Upgrade(c *gin.Context) {
+	Chat(c.Writer, c.Request)
+}
+
 func Chat(w gin.ResponseWriter, r *http.Request) {
 	ws := websocket.Upgrader{
 		ReadBufferSize:  1024,
@@ -89,9 +93,11 @@ func Now() string {
 }
 
 func broadcastMessage(m map[string]*websocket.Conn, message interface{}) {
-	for _, conn := range m {
+	for key, conn := range m {
 		if err := conn.WriteJSON(message); err != nil {
-			continue
+			logrus.Errorf("failed to write error: %v", err)
+		} else {
+			logrus.Infof("send message to %s successfully", key)
 		}
 	}
 }
@@ -105,13 +111,16 @@ func Handler(log *logrus.Logger, msgCh chan ChatMessageDetail) {
 			joinMsg := msg.(JoinMessage)
 			m[joinMsg.Name] = joinMsg.Conn
 			if err := joinMsg.Conn.WriteJSON(gin.H{
-				"action": "message",
+				"action": MembersCmd,
 				"message": fmt.Sprintf("You are joined as [%s]", joinMsg.Name),
 			}); err != nil {
 				return
 			}
 			log.Infof("joined: %s", joinMsg.Name)
-			broadcastMessage(m, fmt.Sprintf("[%s] %s joined room", Now(), joinMsg.Name))
+			broadcastMessage(m, gin.H{
+				"action": MembersCmd,
+				"message": fmt.Sprintf("[%s] %s joined room", Now(), joinMsg.Name),
+			})
 			break
 		case MessageSend:
 			msgSend := msg.(MessageSend)
@@ -128,7 +137,7 @@ func Handler(log *logrus.Logger, msgCh chan ChatMessageDetail) {
 					}
 
 					if err := conn.WriteJSON(gin.H{
-						"action":  "message",
+						"action":  MembersCmd,
 						"message": fmt.Sprintf("[%s] SYSTEM: %s", Now(), message),
 					}); err != nil {
 						break
@@ -136,7 +145,7 @@ func Handler(log *logrus.Logger, msgCh chan ChatMessageDetail) {
 				} else {
 					log.Infof("%s typed [%s]", sendMsg.Sender, sendMsg.Message)
 					broadcastMessage(m, gin.H{
-						"action":  "message",
+						"action":  MembersCmd,
 						"message": fmt.Sprintf("[%s] %s: %s", Now(), sendMsg.Sender, sendMsg.Message),
 					})
 				}
@@ -144,7 +153,7 @@ func Handler(log *logrus.Logger, msgCh chan ChatMessageDetail) {
 			case MembersAction:
 				_ = msgSend.Message.(UpdateMembers)
 				broadcastMessage(m, gin.H{
-					"action":  "members",
+					"action":  MembersCmd,
 					"members": len(m),
 				})
 			}
@@ -160,23 +169,28 @@ func Handler(log *logrus.Logger, msgCh chan ChatMessageDetail) {
 	}
 }
 
+const (
+	MembersCmd = "members"
+	WhisperCmd = "whisper"
+)
+
 func parseMessage(sender, message string, m map[string]*websocket.Conn) (string, error) {
 	message = strings.TrimPrefix(message, "/")
 	command, message := splitAtChar(message, ' ')
 
 	switch command {
-	case "members":
+	case MembersCmd:
 		var members []string
 		for member, _ := range m {
 			members = append(members, member)
 		}
 		return fmt.Sprintf("List of members %d: [%s]", len(members), strings.Join(members, ", ")), nil
-	case "whisper":
+	case WhisperCmd:
 		to, message := splitAtChar(message, ' ')
 		if conn, ok := m[to]; !ok {
 			return "", fmt.Errorf("user %s is not exist", to)
 		} else if err := conn.WriteJSON(gin.H{
-			"action": "message",
+			"action": MembersCmd,
 			"message": fmt.Sprintf("[%s] %s whispered: %s", Now(), sender, message),
 		}); err != nil {
 			return "", fmt.Errorf("failed to send message to %s", to)

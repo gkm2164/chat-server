@@ -20,9 +20,7 @@ func main() {
 
 	server := gin.New()
 	server.Use(ginlogrus.Logger(log), gin.Recovery())
-	server.GET("/ws", func(c *gin.Context) {
-		ws.Chat(c.Writer, c.Request)
-	})
+	server.GET("/ws", ws.Upgrade)
 
 	server.NoRoute(static.Serve("/",
 		static.LocalFile("./assets", false)))
